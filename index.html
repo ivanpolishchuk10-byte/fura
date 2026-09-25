@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Мапа Олександра Фуррія</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --map-tiles-filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.5) brightness(0.7) grayscale(3);
+    --ui-bg: rgba(20,20,20,.92);
+    --ui-bg-2: #2a2a2a;
+    --ui-br: rgba(255,255,255,.18);
+    --ui-tx: #fff;
+    --ui-tx2: rgba(255,255,255,.6);
+    --accent: #e8365d;
+  }
+  html, body { height: 100%; margin: 0; background: #191919;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #map { position: absolute; inset: 0; background: #2b2b2b; }
+  /* Фільтр на всю панель тайлів цілком (а не на кожен тайл окремо) —
+     інакше кожен тайл фільтрується окремо і стики стають чорними полосками. */
+  .leaflet-tile-pane { filter: var(--map-tiles-filter, none); }
+  .map-tiles { filter: none; }
+  /* Авто-фікс швів між тайлами (нестандартний екран / масштаб Windows / зум браузера).
+     Точне значення нахлесту підбирає JS — autoTileFix() нижче. */
+  .leaflet-tile-container img.leaflet-tile {
+    outline: 1px solid transparent;
+  }
+
+  /* ---------- Панель инструментов ---------- */
+  .toolbar {
+    position: absolute; z-index: 1000; top: 8px; right: 8px;
+    display: flex; flex-direction: column; gap: 5px; align-items: flex-end;
+  }
+  .btn {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 30px; padding: 0 9px;
+    box-sizing: border-box;
+    background: var(--ui-bg); color: var(--ui-tx);
+    border: 1px solid var(--ui-br); border-radius: 7px;
+    font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    backdrop-filter: blur(6px);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:hover { background: #383836; }
+  .btn:focus-visible { outline: 2px solid #5E9FE8; outline-offset: 2px; }
+  .btn.active { background: var(--accent); border-color: var(--accent); }
+  .btn .ico { display: flex; line-height: 1; }
+  .btn .ico svg { width: 12px; height: 12px; }
+
+  /* ---------- Панель выбора типа цели ---------- */
+  .panel {
+    position: absolute; z-index: 1001;
+    background: var(--ui-bg); color: var(--ui-tx);
+    border: 1px solid var(--ui-br); border-radius: 12px;
+    padding: 10px; backdrop-filter: blur(8px);
+    box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  }
+  .panel h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--ui-tx2); font-weight: 700; }
+  /* Панели открываются левее кнопок, чтобы их не закрывать */
+  #typePanel { top: 8px; right: 156px; width: 140px; }
+  #settingsPanel { top: 8px; right: 156px; width: 220px; max-height: calc(100% - 16px); overflow: auto; }
+  .hidden { display: none !important; }
+
+  .type-row {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; box-sizing: border-box;
+    min-height: 30px; padding: 4px 8px; margin-bottom: 4px; gap: 8px;
+    background: transparent; color: var(--ui-tx);
+    border: 1px solid var(--ui-br); border-radius: 7px;
+    font-size: 12px; text-align: left; cursor: pointer;
+  }
+  .type-row:last-child { margin-bottom: 0; }
+  .type-row:hover { background: #383836; }
+  .type-row.sel { border-color: var(--accent); background: rgba(232,54,93,.16); }
+  .type-row img { width: 14px; height: 14px; object-fit: contain; }
+
+  .field { margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label { display: block; font-size: 11px; color: var(--ui-tx2); margin-bottom: 5px; }
+  .field .val { float: right; color: var(--ui-tx); font-variant-numeric: tabular-nums; }
+  input[type="text"], input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 9px 10px;
+    background: var(--ui-bg-2); color: var(--ui-tx);
+    border: 1px solid var(--ui-br); border-radius: 8px; font-size: 14px;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  input[type="color"] { width: 100%; height: 34px; padding: 2px; background: var(--ui-bg-2);
+    border: 1px solid var(--ui-br); border-radius: 8px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 12px; min-height: 26px; }
+  .check input { width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+  .field { margin-bottom: 10px; }
+
+  /* ---------- Цели ---------- */
+  .tgt-icon { background: none !important; border: none !important; overflow: visible !important; }
+  .tgt-img {
+    position: absolute; left: 0; top: 0;
+    transform-origin: 50% 50%; will-change: transform;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,.6));
+  }
+  .tgt-fallback {
+    position: absolute; left: 0; top: 0; background: var(--accent);
+    clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,.6));
+  }
+  .tgt-pill {
+    position: absolute; left: 0; top: 0;
+    transform: translate(-50%, -100%);
+    padding: 2px 6px; border-radius: 5px;
+    background: rgba(0,0,0,.78);
+    color: #fff; font-size: 11px; font-weight: 700; line-height: 1.25;
+    white-space: nowrap; text-align: center; letter-spacing: .01em;
+    text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  }
+  .tgt-pill .sub { display: block; font-weight: 500; font-size: 10px; color: rgba(255,255,255,.85); }
+  .tgt-sel .tgt-img, .tgt-sel .tgt-fallback { filter: drop-shadow(0 0 6px #fff); }
+
+  /* ---------- Меню цели ---------- */
+  #targetMenu { z-index: 1002; width: 230px; }
+  #targetMenu .row { display: flex; gap: 8px; margin-top: 12px; }
+  #targetMenu .row .btn { flex: 1; justify-content: center; padding: 0 8px; font-size: 13px; }
+  .btn.danger { background: rgba(229,100,88,.18); border-color: #e56458; color: #ffb3ac; }
+
+  /* ---------- Подсказка режима ---------- */
+  #hint {
+    position: absolute; z-index: 1000; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--ui-bg); color: var(--ui-tx); border: 1px solid var(--ui-br);
+    border-radius: 999px; padding: 9px 16px; font-size: 13px; font-weight: 600;
+    backdrop-filter: blur(6px); pointer-events: none; max-width: calc(100% - 32px); text-align: center;
+  }
+  @media (max-width: 620px) {
+    /* На телефоне — только иконки, чтобы не закрывать карту */
+    .btn .lbl { display: none; }
+    .toolbar .btn { padding: 0 7px; min-height: 28px; }
+    #typePanel { top: 8px; right: 40px; width: 128px; }
+    #settingsPanel { top: 8px; right: 40px; width: 190px; }
+  }
+
+  /* ---------- Скріншоти (з index2) ---------- */
+  #cropOverlay {
+    position: fixed; inset: 0; z-index: 2000; display: none;
+    cursor: crosshair; background: rgba(0,0,0,.18);
+    touch-action: none;
+  }
+  #cropOverlay.open { display: block; }
+  #cropSel {
+    position: absolute; border: 1px solid rgba(255,255,255,.9);
+    background: rgba(255,255,255,.12); display: none;
+  }
+  #cropHint {
+    position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+    padding: 5px 10px; border-radius: 8px; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 12px; white-space: nowrap;
+  }
+  #shotPreview {
+    position: fixed; inset: 0; z-index: 2001; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+    padding: 16px; background: rgba(0,0,0,.82); box-sizing: border-box;
+  }
+  #shotPreview.open { display: flex; }
+  #shotPreview img {
+    max-width: 92vw; max-height: 78vh;
+    border: 1px solid rgba(255,255,255,.16); border-radius: 4px;
+    background: #222;
+  }
+  #shotPreview .row { display: flex; gap: 8px; }
+  #shotPreview .row .btn { justify-content: center; }
+  #shotPreview .row .btn.primary { background: #fff; color: #191919; border-color: #fff; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="toolbar">
+  <button class="btn" id="btnAdd" type="button" title="Добавить цель"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5 V19 M5 12 H19"/></svg></span><span class="lbl">Добавить цель</span></button>
+  <button class="btn" id="btnCourse" type="button" title="Сменить курс"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 L18 6"/><path d="M11 6 H18 V13"/></svg></span><span class="lbl">Сменить курс</span></button>
+  <button class="btn" id="btnDelete" type="button" title="Удалить цель"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6 L18 18 M18 6 L6 18"/></svg></span><span class="lbl">Удалить цель</span></button>
+  <button class="btn" id="btnFull" type="button" title="Полный экран"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15"/></svg></span><span class="lbl">Полный экран</span></button>
+  <button class="btn" id="btnShot" type="button" title="Скріншот екрана"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M9 3h6l1.5 2H20a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3.5L9 3zm3 5.3a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4z"/><circle cx="12" cy="13" r="3.1"/></svg></span><span class="lbl">Скрін екрану</span></button>
+  <button class="btn" id="btnCrop" type="button" title="Скріншот області"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3v13a2 2 0 0 0 2 2h13M3 6h13a2 2 0 0 1 2 2v13"/></svg></span><span class="lbl">Скрін області</span></button>
+  <button class="btn" id="btnSettings" type="button" title="Настройки"><span class="ico" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 3 V6 M12 18 V21 M3 12 H6 M18 12 H21 M5.6 5.6 L7.8 7.8 M16.2 16.2 L18.4 18.4 M18.4 5.6 L16.2 7.8 M7.8 16.2 L5.6 18.4"/></svg></span><span class="lbl">Настройки</span></button>
+</div>
+
+<div class="panel hidden" id="typePanel">
+  <h3>Тип цели</h3>
+  <div id="typeList"></div>
+</div>
+
+<div class="panel hidden" id="settingsPanel">
+  <h3>Настройки</h3>
+  <div class="field">
+    <div class="check"><input type="checkbox" id="setBorderOn" checked /><label for="setBorderOn" style="margin:0">Границы кордона</label></div>
+  </div>
+  <div class="field">
+    <label for="setBorderColor">Цвет границ</label>
+    <input type="color" id="setBorderColor" value="#ffffff" />
+  </div>
+  <div class="field">
+    <label for="setBorderWeight">Ширина линии <span class="val" id="valWeight">1</span></label>
+    <input type="range" id="setBorderWeight" min="0.5" max="8" step="0.5" value="1" />
+  </div>
+  <div class="field">
+    <label for="setBorderOpacity">Прозрачность линии <span class="val" id="valOpacity">100%</span></label>
+    <input type="range" id="setBorderOpacity" min="0" max="100" step="5" value="100" />
+  </div>
+  <div class="field">
+    <label for="setSize">Размер целей <span class="val" id="valSize">28 px</span></label>
+    <input type="range" id="setSize" min="12" max="64" step="2" value="28" />
+  </div>
+  <div class="field">
+    <div class="check"><input type="checkbox" id="setInfoOn" checked /><label for="setInfoOn" style="margin:0">Доп. информация (таблетка)</label></div>
+  </div>
+  <div class="field">
+    <label for="setPillSize">Размер таблетки <span class="val" id="valPill">11 px</span></label>
+    <input type="range" id="setPillSize" min="7" max="28" step="1" value="11" />
+  </div>
+  <div class="field">
+    <div class="check"><input type="checkbox" id="setPillSync" /><label for="setPillSync" style="margin:0">Синхронизировать с размером целей</label></div>
+  </div>
+  <div class="field">
+    <div class="check"><input type="checkbox" id="setMenuOn" checked /><label for="setMenuOn" style="margin:0">Меню цели (ПКМ / долгое нажатие)</label></div>
+  </div>
+  <div class="field">
+    <button class="btn danger" id="btnClear" type="button" style="width:100%;justify-content:center">Удалить все цели</button>
+  </div>
+</div>
+
+<div class="panel hidden" id="targetMenu">
+  <h3>Меню цели</h3>
+  <div class="field">
+    <label for="mName">Название</label>
+    <input type="text" id="mName" placeholder="БпЛА / Бензиновый" />
+  </div>
+  <div class="field">
+    <label for="mSpeed">Скорость, км/ч</label>
+    <input type="number" id="mSpeed" min="0" step="10" placeholder="0" />
+  </div>
+  <div class="field">
+    <label for="mAlt">Высота, м</label>
+    <input type="number" id="mAlt" min="0" step="50" placeholder="0" />
+  </div>
+  <div class="row">
+    <button class="btn" id="mSave" type="button">Сохранить</button>
+    <button class="btn danger" id="mDel" type="button">Удалить</button>
+  </div>
+  <div class="row">
+    <button class="btn" id="mClose" type="button" style="width:100%">Закрыть</button>
+  </div>
+</div>
+
+<div id="hint">Режим просмотра</div>
+
+<!-- Скріншоти з index2: оверлей області + превʼю -->
+<div id="cropOverlay">
+  <div id="cropSel"></div>
+  <div id="cropHint">Виділіть область · Esc — скасувати</div>
+</div>
+
+<div id="shotPreview">
+  <img id="shotPreviewImg" alt="" />
+  <div class="row">
+    <button class="btn" id="shotCancel" type="button">Скасувати</button>
+    <button class="btn primary" id="shotCopy" type="button">Скопіювати</button>
+    <button class="btn primary" id="shotSave" type="button">Завантажити</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* =========================================================
+   Типы целей. Иконки лежат рядом с index.html, смотрят вверх.
+   ========================================================= */
+const TYPES = {
+  geran2:  { title: "Герань-2", icon: "shahed.png",  info: "БпЛА / Бензиновый" },
+  geran4:  { title: "Герань-4", icon: "shahed.png",  info: "БпЛА / Реактивный" },
+  gerbera: { title: "Гербера",  icon: "gerbera.png", info: "БпЛА / Бензиновый" },
+  kh101:   { title: "X-101",    icon: "kh101.png",   info: "Ракета / Х-101" },
+  geran5:   { title: "Герань-5",    icon: "geran5.png",   info: "Ракета / Герань-5" },
+  iskanderk:   { title: "Искандер-К",    icon: "iskanderk.png",   info: "Ракета / Искандер-К" },
+  kalibr:   { title: "Калибр",    icon: "kalibr.png",   info: "Ракета / Калибр" },
+  kh59:   { title: "X-59",    icon: "kh59.png",   info: "Ракета / Х-59" },
+  banderol:   { title: "Бандероль",    icon: "banderol.png",   info: "Ракета / Бандероль" },
+};
+
+/* Настройки по умолчанию */
+const DEFAULTS = {
+  borderOn: true,
+  borderColor: "#ffffff",
+  borderWeight: 1,
+  borderOpacity: 1,
+  targetSize: 28,
+  infoOn: true,
+  menuOn: true,
+  pillSize: 11,
+  pillSync: false
+};
+let settings = Object.assign({}, DEFAULTS);
+try {
+  const s = JSON.parse(localStorage.getItem("mapSettings") || "null");
+  if (s) settings = Object.assign(settings, s);
+} catch (e) {}
+
+/* =========================== Карта =========================== */
+/* Центр карты — Вышгород */
+const VYSHHOROD = [50.5847, 30.4903];
+const map = L.map("map", { zoomControl: true, attributionControl: true, zoomSnap: 1, zoomDelta: 1 })
+  .setView(VYSHHOROD, 9);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  className: "map-tiles",
+  crossOrigin: true,
+  attribution: "© OpenStreetMap contributors"
+}).addTo(map);
+
+/* Авто-підбір нахлесту тайлів проти квадратних полосок.
+   Працює при нестандартному екрані / масштабі Windows / зумі браузера != 100%.
+   Чим далі devicePixelRatio від цілого — тим більший нахлест. */
+let lastTileOverlap = 0;
+function autoTileFix() {
+  const dpr = window.devicePixelRatio || 1;
+  const frac = Math.abs(dpr - Math.round(dpr));
+  let overlap = 256.6;
+  if (frac < 0.02) overlap = 256.6;
+  else if (frac < 0.15) overlap = 257;
+  else if (frac < 0.35) overlap = 257.6;
+  else overlap = 258;
+  try {
+    const z = (window.outerWidth && window.innerWidth) ? window.outerWidth / window.innerWidth : 1;
+    if (z < 0.98 || z > 1.02) overlap = Math.max(overlap, 257.5);
+  } catch (e) {}
+  if (Math.abs(overlap - lastTileOverlap) < 0.01) return;
+  lastTileOverlap = overlap;
+  let st = document.getElementById("tileFixStyle");
+  if (!st) { st = document.createElement("style"); st.id = "tileFixStyle"; document.head.appendChild(st); }
+  st.textContent = ".leaflet-tile-container img.leaflet-tile{width:" + overlap + "px !important;height:" + overlap + "px !important;}";
+  document.querySelectorAll(".leaflet-tile-container img.leaflet-tile").forEach((img) => {
+    img.style.width = overlap + "px";
+    img.style.height = overlap + "px";
+  });
+}
+window.addEventListener("resize", () => setTimeout(autoTileFix, 100));
+map.on("load moveend zoomend viewreset", () => setTimeout(autoTileFix, 60));
+setTimeout(autoTileFix, 300);
+setInterval(() => { // ловимо зміну зуму браузера / DPR без resize
+  const dpr = window.devicePixelRatio || 1;
+  const frac = Math.abs(dpr - Math.round(dpr));
+  const want = frac < 0.02 ? 256.6 : frac < 0.15 ? 257 : frac < 0.35 ? 257.6 : 258;
+  if (Math.abs(want - lastTileOverlap) > 0.01) autoTileFix();
+}, 1500);
+
+/* ==================== Границы кордона ==================== */
+let borderLayer = null;
+
+function borderStyle() {
+  return {
+    color: settings.borderColor,
+    weight: Number(settings.borderWeight),
+    opacity: Number(settings.borderOpacity),
+    fill: false,
+    fillOpacity: 0,
+    smoothFactor: 0,
+    interactive: false
+  };
+}
+
+fetch("kordon.json")
+  .then(r => r.json())
+  .then(geo => {
+    borderLayer = L.geoJSON(geo, { style: borderStyle, pane: "overlayPane" });
+    if (settings.borderOn) borderLayer.addTo(map);
+  })
+  .catch(err => console.warn("kordon.json не загружен:", err));
+
+function refreshBorder() {
+  if (!borderLayer) return;
+  if (settings.borderOn) {
+    if (!map.hasLayer(borderLayer)) borderLayer.addTo(map);
+    borderLayer.setStyle(borderStyle());
+  } else if (map.hasLayer(borderLayer)) {
+    map.removeLayer(borderLayer);
+  }
+}
+
+/* ========================== Цели ========================== */
+let targets = [];
+let seq = 1;
+
+function bearing(a, b) {
+  const rad = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * rad) * Math.cos(b.lat * rad);
+  const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) -
+            Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos((b.lng - a.lng) * rad);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+/* Итоговый размер шрифта таблетки: ручной либо привязанный к размеру цели */
+function pillFontSize() {
+  if (settings.pillSync) {
+    const v = Number(settings.targetSize) * (Number(settings.pillSize) / 28);
+    return Math.max(6, Math.round(v * 10) / 10);
+  }
+  return Number(settings.pillSize);
+}
+
+/* Текст "таблетки" */
+function pillHtml(t) {
+  const title = (t.name && t.name.trim()) ? t.name.trim() : TYPES[t.type].info;
+  const sp = Number(t.speed) > 0 ? Number(t.speed) + " км/ч" : "";
+  const al = Number(t.alt) > 0 ? Number(t.alt) + "м" : "";
+  const sub = [sp, al].filter(Boolean).join(" / ");
+  const fs = pillFontSize();
+  const style = "font-size:" + fs + "px;padding:" + (fs * 0.18).toFixed(1) + "px " +
+                (fs * 0.55).toFixed(1) + "px;border-radius:" + (fs * 0.45).toFixed(1) + "px";
+  return '<div class="tgt-pill" style="' + style + '">' + esc(title) +
+         (sub ? '<span class="sub" style="font-size:' + (fs * 0.9).toFixed(1) + 'px">' + esc(sub) + "</span>" : "") + "</div>";
+}
+
+function iconHtml(t) {
+  const s = Number(settings.targetSize);
+  const half = s / 2;
+  const pillOffset = half + Math.max(4, pillFontSize() * 0.5);
+  const img =
+    '<img class="tgt-img" src="' + TYPES[t.type].icon + '" alt="" draggable="false" ' +
+    'style="width:' + s + "px;height:" + s + "px;transform:translate(-50%,-50%) rotate(" + t.course + 'deg)" ' +
+    "onerror=\"this.outerHTML='<div class=&quot;tgt-fallback&quot; style=&quot;width:" + s +
+    "px;height:" + s + "px;transform:translate(-50%,-50%) rotate(" + t.course + "deg)&quot;></div>'\" />";
+  const pill = settings.infoOn
+    ? '<div style="position:absolute;left:0;top:' + (-pillOffset) + 'px">' + pillHtml(t) + "</div>"
+    : "";
+  return pill + img;
+}
+
+function makeIcon(t) {
+  return L.divIcon({
+    className: "tgt-icon" + (selectedId === t.id ? " tgt-sel" : ""),
+    html: iconHtml(t),
+    iconSize: [0, 0],
+    iconAnchor: [0, 0]
+  });
+}
+
+function redraw(t) { t.marker.setIcon(makeIcon(t)); }
+function redrawAll() { targets.forEach(redraw); }
+
+function addTarget(type, latlng, course) {
+  const t = {
+    id: seq++, type: type,
+    lat: latlng.lat, lng: latlng.lng,
+    course: Math.round(course), name: "", speed: 0, alt: 0
+  };
+  t.marker = L.marker([t.lat, t.lng], { icon: makeIcon(t), riseOnHover: true }).addTo(map);
+  bindTarget(t);
+  targets.push(t);
+  save();
+  return t;
+}
+
+function removeTarget(t) {
+  map.removeLayer(t.marker);
+  targets = targets.filter(x => x !== t);
+  if (selectedId === t.id) selectedId = null;
+  save();
+}
+
+function bindTarget(t) {
+  t.marker.on("click", ev => {
+    L.DomEvent.stopPropagation(ev);
+    if (mode === "delete") { removeTarget(t); setHint(); return; }
+    if (mode === "course") {
+      selectedId = t.id; redrawAll();
+      setHint("Смена курса: нажмите на карту, чтобы задать новый курс");
+      return;
+    }
+    /* На тач-экранах меню открывается только долгим нажатием, не обычным тапом */
+    if (isTouchClick(ev)) return;
+    openMenu(t, ev.containerPoint);
+  });
+  t.marker.on("contextmenu", ev => {
+    L.DomEvent.stopPropagation(ev);
+    if (ev.originalEvent) ev.originalEvent.preventDefault();
+    openMenu(t, ev.containerPoint);
+  });
+  /* Долгое нажатие на телефоне */
+  const el = t.marker.getElement();
+  if (el) {
+    let timer = null, moved = false;
+    el.addEventListener("touchstart", ev => {
+      moved = false;
+      const pt = map.mouseEventToContainerPoint(ev.touches[0]);
+      timer = setTimeout(() => { timer = null; if (!moved) openMenu(t, pt); }, 550);
+    }, { passive: true });
+    el.addEventListener("touchmove", () => { moved = true; if (timer) { clearTimeout(timer); timer = null; } }, { passive: true });
+    el.addEventListener("touchend", () => { if (timer) { clearTimeout(timer); timer = null; } }, { passive: true });
+    el.addEventListener("contextmenu", ev => ev.preventDefault());
+  }
+}
+
+/* ===================== Режимы работы ===================== */
+let mode = null;              // null | "add" | "course" | "delete"
+let currentType = "geran2";
+let pendingPos = null;        // первая точка при добавлении
+let selectedId = null;        // выбранная цель для смены курса
+let ghost = null, ghostLine = null;
+let lastTouchAt = 0;
+document.addEventListener("touchstart", () => { lastTouchAt = Date.now(); }, { passive: true, capture: true });
+function isTouchClick(ev) {
+  const oe = ev && ev.originalEvent;
+  if (oe && oe.pointerType === "touch") return true;
+  if (oe && typeof oe.type === "string" && oe.type.indexOf("touch") === 0) return true;
+  return Date.now() - lastTouchAt < 800;
+}
+
+const elHint = document.getElementById("hint");
+const btns = {
+  add: document.getElementById("btnAdd"),
+  course: document.getElementById("btnCourse"),
+  delete: document.getElementById("btnDelete")
+};
+const typePanel = document.getElementById("typePanel");
+
+function setHint(text) {
+  if (text) { elHint.textContent = text; return; }
+  if (mode === "add") {
+    elHint.textContent = pendingPos
+      ? "Добавление: нажмите второй раз, чтобы задать курс"
+      : "Добавление (" + TYPES[currentType].title + "): нажмите на карту — место появления";
+  } else if (mode === "course") {
+    elHint.textContent = selectedId
+      ? "Смена курса: нажмите на карту, чтобы задать новый курс"
+      : "Смена курса: выберите цель";
+  } else if (mode === "delete") {
+    elHint.textContent = "Удаление: нажмите на цель";
+  } else {
+    elHint.textContent = "Режим просмотра · ПКМ / долгое нажатие на цели — меню";
+  }
+}
+
+function clearGhost() {
+  if (ghost) { map.removeLayer(ghost); ghost = null; }
+  if (ghostLine) { map.removeLayer(ghostLine); ghostLine = null; }
+}
+
+function setMode(next) {
+  mode = (mode === next) ? null : next;
+  pendingPos = null;
+  selectedId = null;
+  clearGhost();
+  redrawAll();
+  Object.keys(btns).forEach(k => btns[k].classList.toggle("active", mode === k));
+  typePanel.classList.toggle("hidden", mode !== "add");
+  if (mode === "add") {
+    settingsPanel.classList.add("hidden");
+    document.getElementById("btnSettings").classList.remove("active");
+  }
+  const c = map.getContainer();
+  c.style.cursor = mode ? "crosshair" : "";
+  closeMenu();
+  setHint();
+}
+
+btns.add.addEventListener("click", () => setMode("add"));
+btns.course.addEventListener("click", () => setMode("course"));
+btns.delete.addEventListener("click", () => setMode("delete"));
+
+/* Список типов */
+const typeList = document.getElementById("typeList");
+Object.keys(TYPES).forEach(key => {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "type-row" + (key === currentType ? " sel" : "");
+  b.dataset.key = key;
+  b.innerHTML = '<img src="' + TYPES[key].icon + '" alt="" onerror="this.style.visibility=\'hidden\'" />' +
+                "<span>" + esc(TYPES[key].title) + "</span>";
+  b.addEventListener("click", () => {
+    currentType = key;
+    pendingPos = null; clearGhost();
+    [...typeList.children].forEach(x => x.classList.toggle("sel", x.dataset.key === key));
+    setHint();
+  });
+  typeList.appendChild(b);
+});
+
+/* Клики по карте */
+map.on("click", e => {
+  if (mode === "add") {
+    if (!pendingPos) {
+      pendingPos = e.latlng;
+      ghost = L.marker(e.latlng, {
+        icon: L.divIcon({
+          className: "tgt-icon",
+          html: iconHtml({ type: currentType, course: 0, name: "", speed: 0, alt: 0 }),
+          iconSize: [0, 0], iconAnchor: [0, 0]
+        }),
+        opacity: 0.65, interactive: false
+      }).addTo(map);
+      ghostLine = L.polyline([e.latlng, e.latlng],
+        { color: "#ffffff", weight: 1, dashArray: "4 4", opacity: 0.7, interactive: false }).addTo(map);
+    } else {
+      addTarget(currentType, pendingPos, bearing(pendingPos, e.latlng));
+      pendingPos = null;
+      clearGhost();
+    }
+    setHint();
+  } else if (mode === "course" && selectedId) {
+    const t = targets.find(x => x.id === selectedId);
+    if (t) {
+      t.course = Math.round(bearing({ lat: t.lat, lng: t.lng }, e.latlng));
+      selectedId = null;
+      redrawAll();
+      save();
+    }
+    setHint();
+  }
+});
+
+/* Превью курса */
+map.on("mousemove", e => {
+  if (mode === "add" && pendingPos && ghost) {
+    const br = bearing(pendingPos, e.latlng);
+    ghost.setIcon(L.divIcon({
+      className: "tgt-icon",
+      html: iconHtml({ type: currentType, course: Math.round(br), name: "", speed: 0, alt: 0 }),
+      iconSize: [0, 0], iconAnchor: [0, 0]
+    }));
+    if (ghostLine) ghostLine.setLatLngs([pendingPos, e.latlng]);
+  }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { setMode(null); closeMenu(); }
+});
+
+/* ======================= Меню цели ======================= */
+const menu = document.getElementById("targetMenu");
+const mName = document.getElementById("mName");
+const mSpeed = document.getElementById("mSpeed");
+const mAlt = document.getElementById("mAlt");
+let menuTarget = null;
+
+function openMenu(t, point) {
+  if (!settings.menuOn) return;
+  menuTarget = t;
+  mName.value = t.name || "";
+  mName.placeholder = TYPES[t.type].info;
+  mSpeed.value = t.speed ? t.speed : "";
+  mAlt.value = t.alt ? t.alt : "";
+  menu.classList.remove("hidden");
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const x = Math.min(Math.max(8, (point ? point.x : 60) + 12), window.innerWidth - w - 8);
+  const y = Math.min(Math.max(8, (point ? point.y : 60) - 20), window.innerHeight - h - 8);
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  menu.style.right = "auto";
+}
+function closeMenu() { menu.classList.add("hidden"); menuTarget = null; }
+
+document.getElementById("mSave").addEventListener("click", () => {
+  if (!menuTarget) return;
+  menuTarget.name = mName.value.trim();
+  menuTarget.speed = Math.max(0, Number(mSpeed.value) || 0);
+  menuTarget.alt = Math.max(0, Number(mAlt.value) || 0);
+  redraw(menuTarget);
+  save();
+  closeMenu();
+});
+document.getElementById("mDel").addEventListener("click", () => {
+  if (menuTarget) removeTarget(menuTarget);
+  closeMenu();
+});
+document.getElementById("mClose").addEventListener("click", closeMenu);
+map.on("contextmenu", e => { if (e.originalEvent) e.originalEvent.preventDefault(); closeMenu(); });
+map.on("movestart", closeMenu);
+
+/* Панели не должны прокручивать/двигать карту */
+["typePanel", "settingsPanel", "targetMenu"].forEach(id => {
+  const el = document.getElementById(id);
+  L.DomEvent.disableClickPropagation(el);
+  L.DomEvent.disableScrollPropagation(el);
+});
+
+/* ======================= Настройки ======================= */
+const settingsPanel = document.getElementById("settingsPanel");
+document.getElementById("btnSettings").addEventListener("click", () => {
+  const opening = settingsPanel.classList.contains("hidden");
+  settingsPanel.classList.toggle("hidden", !opening);
+  document.getElementById("btnSettings").classList.toggle("active", opening);
+  /* Панели не должны перекрывать друг друга */
+  if (opening && mode === "add") setMode(null);
+});
+
+/* Полноэкранный режим */
+const btnFull = document.getElementById("btnFull");
+btnFull.addEventListener("click", () => {
+  const el = document.documentElement;
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  if (!fsEl) {
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+    if (req) req.call(el);
+  } else {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+  }
+});
+function syncFull() {
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  btnFull.classList.toggle("active", on);
+  setTimeout(() => map.invalidateSize(), 250);
+}
+document.addEventListener("fullscreenchange", syncFull);
+document.addEventListener("webkitfullscreenchange", syncFull);
+
+const sBorderOn = document.getElementById("setBorderOn");
+const sColor = document.getElementById("setBorderColor");
+const sWeight = document.getElementById("setBorderWeight");
+const sOpacity = document.getElementById("setBorderOpacity");
+const sSize = document.getElementById("setSize");
+const sInfoOn = document.getElementById("setInfoOn");
+const sMenuOn = document.getElementById("setMenuOn");
+const sPillSize = document.getElementById("setPillSize");
+const sPillSync = document.getElementById("setPillSync");
+
+function pillLabel() {
+  return settings.pillSync
+    ? pillFontSize() + " px (синхр.)"
+    : settings.pillSize + " px";
+}
+
+function syncControls() {
+  sBorderOn.checked = !!settings.borderOn;
+  sColor.value = settings.borderColor;
+  sWeight.value = settings.borderWeight;
+  sOpacity.value = Math.round(settings.borderOpacity * 100);
+  sSize.value = settings.targetSize;
+  sInfoOn.checked = !!settings.infoOn;
+  sMenuOn.checked = !!settings.menuOn;
+  sPillSize.value = settings.pillSize;
+  sPillSync.checked = !!settings.pillSync;
+  document.getElementById("valPill").textContent = pillLabel();
+  document.getElementById("valWeight").textContent = settings.borderWeight;
+  document.getElementById("valOpacity").textContent = Math.round(settings.borderOpacity * 100) + "%";
+  document.getElementById("valSize").textContent = settings.targetSize + " px";
+}
+syncControls();
+
+sBorderOn.addEventListener("change", () => { settings.borderOn = sBorderOn.checked; refreshBorder(); save(); });
+sColor.addEventListener("input", () => { settings.borderColor = sColor.value; refreshBorder(); save(); });
+sWeight.addEventListener("input", () => {
+  settings.borderWeight = Number(sWeight.value);
+  document.getElementById("valWeight").textContent = settings.borderWeight;
+  refreshBorder(); save();
+});
+sOpacity.addEventListener("input", () => {
+  settings.borderOpacity = Number(sOpacity.value) / 100;
+  document.getElementById("valOpacity").textContent = sOpacity.value + "%";
+  refreshBorder(); save();
+});
+sSize.addEventListener("input", () => {
+  settings.targetSize = Number(sSize.value);
+  document.getElementById("valSize").textContent = settings.targetSize + " px";
+  document.getElementById("valPill").textContent = pillLabel();
+  redrawAll(); save();
+});
+sInfoOn.addEventListener("change", () => { settings.infoOn = sInfoOn.checked; redrawAll(); save(); });
+sPillSize.addEventListener("input", () => {
+  settings.pillSize = Number(sPillSize.value);
+  document.getElementById("valPill").textContent = pillLabel();
+  redrawAll(); save();
+});
+sPillSync.addEventListener("change", () => {
+  settings.pillSync = sPillSync.checked;
+  document.getElementById("valPill").textContent = pillLabel();
+  redrawAll(); save();
+});
+sMenuOn.addEventListener("change", () => {
+  settings.menuOn = sMenuOn.checked;
+  if (!settings.menuOn) closeMenu();
+  save();
+});
+
+document.getElementById("btnClear").addEventListener("click", () => {
+  if (!targets.length || confirm("Удалить все цели?")) {
+    targets.slice().forEach(removeTarget);
+  }
+});
+
+/* ============== Сохранение состояния (localStorage) ============== */
+function save() {
+  try {
+    localStorage.setItem("mapSettings", JSON.stringify(settings));
+    localStorage.setItem("mapTargets", JSON.stringify(targets.map(t => ({
+      id: t.id, type: t.type, lat: t.lat, lng: t.lng,
+      course: t.course, name: t.name, speed: t.speed, alt: t.alt
+    }))));
+  } catch (e) {}
+}
+
+(function restore() {
+  let data = [];
+  try { data = JSON.parse(localStorage.getItem("mapTargets") || "[]"); } catch (e) {}
+  data.forEach(d => {
+    if (!TYPES[d.type]) return;
+    const t = Object.assign({ name: "", speed: 0, alt: 0 }, d);
+    t.marker = L.marker([t.lat, t.lng], { icon: makeIcon(t), riseOnHover: true }).addTo(map);
+    bindTarget(t);
+    targets.push(t);
+    seq = Math.max(seq, (t.id || 0) + 1);
+  });
+})();
+
+/* =========================================================
+   Скріншоти з index2 (спрощено під цей файл):
+   - #btnShot = Скріншот екрана (shootFull з index2)
+   - #btnCrop = Скріншот області (startCrop/onCropEnd з index2)
+   - превʼю з кнопками Скопіювати / Завантажити / Скасувати
+   ========================================================= */
+const shotPreviewEl = document.getElementById("shotPreview");
+const shotPreviewImg = document.getElementById("shotPreviewImg");
+let shotPreviewData = null;
+let shotPreviewCanvas = null;
+const shotIconCache = {};
+
+function shotRoundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function shotLoadIcon(src) {
+  if (shotIconCache[src]) return shotIconCache[src];
+  const p = new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => resolve(null);
+    im.src = src;
+  });
+  shotIconCache[src] = p;
+  return p;
+}
+
+function shotDrawBase(ctx) {
+  const size = map.getSize();
+  ctx.save();
+  ctx.fillStyle = "#2b2b2b";
+  ctx.fillRect(0, 0, size.x, size.y);
+  // Той самий фільтр що на екрані ("як було") — щоб скрін був темний як карта
+  let tileFilter = "";
+  try { tileFilter = getComputedStyle(document.documentElement).getPropertyValue("--map-tiles-filter").trim(); } catch (e) {}
+  if ("filter" in ctx && tileFilter) ctx.filter = tileFilter;
+  const mapRect = map.getContainer().getBoundingClientRect();
+  // Тайли OSM — як drawBase() в index2, але з нахлестом +1.5px щоб прибрати полоски на скріншоті
+  document.querySelectorAll(".leaflet-tile-pane img.leaflet-tile").forEach((img) => {
+    if (!img.complete || !img.naturalWidth) return;
+    try {
+      const r = img.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const x = r.left - mapRect.left, y = r.top - mapRect.top;
+      ctx.drawImage(img, x - 1.5, y - 1.5, r.width + 3, r.height + 3);
+    } catch (e) {}
+  });
+  if ("filter" in ctx) ctx.filter = "none";
+  ctx.restore();
+}
+
+function shotDrawBorders(ctx) {
+  if (!settings.borderOn || !borderLayer) return;
+  const st = borderStyle();
+  ctx.save();
+  ctx.strokeStyle = st.color;
+  ctx.globalAlpha = st.opacity == null ? 1 : Number(st.opacity);
+  ctx.lineWidth = Number(st.weight) || 1;
+  ctx.lineJoin = "round";
+  const drawRing = (ring) => {
+    ring.forEach((p, i) => {
+      const pt = map.latLngToContainerPoint(p);
+      if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.closePath();
+  };
+  const drawLatLngs = (ll) => {
+    if (!ll || !ll.length) return;
+    if (ll[0] instanceof L.LatLng) { drawRing(ll); return; }
+    ll.forEach((part) => {
+      if (!Array.isArray(part)) return;
+      if (part.length && part[0] instanceof L.LatLng) drawRing(part);
+      else drawLatLngs(part);
+    });
+  };
+  ctx.beginPath();
+  borderLayer.eachLayer((l) => {
+    if (l.getLatLngs) {
+      try { drawLatLngs(l.getLatLngs()); } catch (e) {}
+    }
+  });
+  try { ctx.stroke(); } catch (e) {}
+  ctx.restore();
+}
+
+function shotDrawPill(ctx, t, p) {
+  const title = (t.name && String(t.name).trim()) ? String(t.name).trim() : TYPES[t.type].info;
+  const sp = Number(t.speed) > 0 ? Number(t.speed) + " км/ч" : "";
+  const al = Number(t.alt) > 0 ? Number(t.alt) + "м" : "";
+  const sub = [sp, al].filter(Boolean).join(" / ");
+  const fs = pillFontSize();
+  const subFs = fs * 0.9;
+  const fontFam = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  ctx.save();
+  ctx.font = "700 " + fs + "px " + fontFam;
+  const wTitle = ctx.measureText(title).width;
+  let wSub = 0;
+  if (sub) { ctx.font = "500 " + subFs + "px " + fontFam; wSub = ctx.measureText(sub).width; }
+  const padX = fs * 0.55, padY = fs * 0.22;
+  const lineH = fs * 1.25, subLineH = subFs * 1.25;
+  const boxW = Math.max(wTitle, wSub) + padX * 2;
+  const boxH = (sub ? lineH + subLineH : lineH) + padY * 2;
+  const size = Number(settings.targetSize);
+  const cx = p.x, cyBottom = p.y - (size / 2 + 4);
+  ctx.fillStyle = "rgba(0,0,0,0.78)";
+  shotRoundRect(ctx, cx - boxW / 2, cyBottom - boxH, boxW, boxH, fs * 0.45);
+  ctx.fill();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#fff";
+  ctx.font = "700 " + fs + "px " + fontFam;
+  try { ctx.fillText(title, cx, cyBottom - boxH + padY); } catch (e) {}
+  if (sub) {
+    ctx.font = "500 " + subFs + "px " + fontFam;
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    try { ctx.fillText(sub, cx, cyBottom - boxH + padY + lineH); } catch (e) {}
+  }
+  ctx.restore();
+}
+
+function shotRenderFrame() {
+  // Прогріваємо іконки, як drawTargets в index2, потім малюємо кадр.
+  // Якість: рендер мінімум у 2x від екрану + PNG без втрат.
+  const need = [...new Set(targets.map((t) => TYPES[t.type].icon))];
+  return Promise.all(need.map(shotLoadIcon)).then((imgs) => {
+    const bySrc = {};
+    need.forEach((s, i) => { bySrc[s] = imgs[i]; });
+    const size = map.getSize();
+    const dpr = Math.max(2, window.devicePixelRatio || 1);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(size.x * dpr));
+    canvas.height = Math.max(1, Math.round(size.y * dpr));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    try { ctx.imageSmoothingQuality = "high"; } catch (e) {}
+    shotDrawBase(ctx);
+    shotDrawBorders(ctx);
+    // Цілі — як drawTargets() в index2.
+    // У цій папці PNG-іконок нема, тому на карті видно червоний трикутник-заглушку
+    // (tgt-fallback) — малюємо його ж на скріншоті, інакше цілей не буде взагалі.
+    targets.forEach((t) => {
+      const img = bySrc[TYPES[t.type].icon];
+      const s = Number(settings.targetSize);
+      const p = map.latLngToContainerPoint([t.lat, t.lng]);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.shadowColor = "rgba(0,0,0,.6)";
+      ctx.shadowBlur = 3;
+      ctx.shadowOffsetY = 1;
+      ctx.rotate((Number(t.course) || 0) * Math.PI / 180);
+      try {
+        if (img) {
+          ctx.drawImage(img, -s / 2, -s / 2, s, s);
+        } else {
+          ctx.fillStyle = "#e8365d";
+          ctx.beginPath();
+          ctx.moveTo(0, -s / 2);
+          ctx.lineTo(s / 2, s / 2);
+          ctx.lineTo(-s / 2, s / 2);
+          ctx.closePath();
+          ctx.fill();
+        }
+      } catch (e) {}
+      ctx.restore();
+      if (settings.infoOn) shotDrawPill(ctx, t, p);
+    });
+    return { canvas: canvas, dpr: dpr };
+  });
+}
+
+function shotOpenPreview(dataUrl, canvas) {
+  shotPreviewData = dataUrl;
+  shotPreviewCanvas = canvas || null;
+  shotPreviewImg.src = dataUrl;
+  shotPreviewEl.classList.add("open");
+}
+function shotClosePreview() {
+  shotPreviewEl.classList.remove("open");
+  shotPreviewImg.removeAttribute("src");
+  shotPreviewData = null;
+  shotPreviewCanvas = null;
+}
+
+document.getElementById("shotCancel").addEventListener("click", shotClosePreview);
+document.getElementById("shotCopy").addEventListener("click", function () {
+  const btn = this;
+  const orig = btn.textContent;
+  const flash = (msg) => { btn.textContent = msg; setTimeout(() => { btn.textContent = orig; }, 1500); };
+  const writeBlob = (blob) => {
+    if (!blob) { alert("Не вдалося скопіювати."); return; }
+    if (!navigator.clipboard || !window.ClipboardItem) {
+      alert("Буфер обміну недоступний у цьому браузері. Скористайтесь «Завантажити».");
+      return;
+    }
+    navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(
+      () => flash("Скопійовано!"),
+      () => alert("Не вдалося скопіювати. Скористайтесь «Завантажити».")
+    );
+  };
+  if (shotPreviewCanvas && shotPreviewCanvas.toBlob) {
+    shotPreviewCanvas.toBlob(writeBlob, "image/png");
+  } else if (shotPreviewData) {
+    fetch(shotPreviewData).then((r) => r.blob()).then(writeBlob).catch(() => alert("Не вдалося скопіювати."));
+  }
+});
+document.getElementById("shotSave").addEventListener("click", () => {
+  if (!shotPreviewData) return;
+  const a = document.createElement("a");
+  a.href = shotPreviewData;
+  a.download = "map-" + Date.now() + ".png";
+  a.click();
+  shotClosePreview();
+});
+
+function shootFull() {
+  shotRenderFrame()
+    .then((frame) => {
+      let dataUrl;
+      try {
+        dataUrl = frame.canvas.toDataURL("image/png");
+      } catch (e) {
+        alert("Скріншот заблоковано CORS тайлів. Перезавантажте сторінку і спробуйте ще раз.");
+        return;
+      }
+      shotOpenPreview(dataUrl, frame.canvas);
+    })
+    .catch((err) => console.error("Скріншот не вдався:", err));
+}
+
+/* ---------- crop-скриншот з index2 ---------- */
+const cropOverlay = document.getElementById("cropOverlay");
+const cropSelBox = document.getElementById("cropSel");
+let cropActive = false;
+let cropStartPt = null;
+
+function startCrop() {
+  if (cropActive) { endCrop(); return; }
+  if (mode) setMode(null);
+  closeMenu();
+  cropActive = true;
+  cropOverlay.classList.add("open");
+  cropSelBox.style.display = "none";
+  document.getElementById("btnCrop").classList.add("active");
+}
+function endCrop() {
+  cropActive = false;
+  cropStartPt = null;
+  cropOverlay.classList.remove("open");
+  cropSelBox.style.display = "none";
+  document.getElementById("btnCrop").classList.remove("active");
+}
+function cropPoint(e) {
+  const t = (e.touches && e.touches.length) ? e.touches[0]
+    : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e);
+  return { x: t.clientX, y: t.clientY };
+}
+function onCropStart(e) {
+  if (!cropActive) return;
+  e.preventDefault();
+  cropStartPt = cropPoint(e);
+  cropSelBox.style.display = "block";
+  cropSelBox.style.left = cropStartPt.x + "px";
+  cropSelBox.style.top = cropStartPt.y + "px";
+  cropSelBox.style.width = "0px";
+  cropSelBox.style.height = "0px";
+}
+function onCropMove(e) {
+  if (!cropActive || !cropStartPt) return;
+  e.preventDefault();
+  const p = cropPoint(e);
+  cropSelBox.style.left = Math.min(p.x, cropStartPt.x) + "px";
+  cropSelBox.style.top = Math.min(p.y, cropStartPt.y) + "px";
+  cropSelBox.style.width = Math.abs(p.x - cropStartPt.x) + "px";
+  cropSelBox.style.height = Math.abs(p.y - cropStartPt.y) + "px";
+}
+function onCropEnd(e) {
+  if (!cropActive || !cropStartPt) return;
+  e.preventDefault();
+  const p = cropPoint(e);
+  const rect = {
+    x: Math.min(p.x, cropStartPt.x),
+    y: Math.min(p.y, cropStartPt.y),
+    w: Math.abs(p.x - cropStartPt.x),
+    h: Math.abs(p.y - cropStartPt.y)
+  };
+  cropStartPt = null;
+  cropSelBox.style.display = "none";
+  if (rect.w < 12 || rect.h < 12) { endCrop(); return; }
+  const mapRect = map.getContainer().getBoundingClientRect();
+  shotRenderFrame()
+    .then((frame) => {
+      const dpr = frame.dpr;
+      const sx = Math.max(0, (rect.x - mapRect.left) * dpr);
+      const sy = Math.max(0, (rect.y - mapRect.top) * dpr);
+      const sw = Math.min(frame.canvas.width - sx, rect.w * dpr);
+      const sh = Math.min(frame.canvas.height - sy, rect.h * dpr);
+      endCrop();
+      if (sw < 2 || sh < 2) return;
+      const out = document.createElement("canvas");
+      out.width = Math.max(1, Math.round(sw));
+      out.height = Math.max(1, Math.round(sh));
+      const octx = out.getContext("2d");
+      octx.imageSmoothingEnabled = true;
+      try { octx.imageSmoothingQuality = "high"; } catch (e) {}
+      octx.drawImage(frame.canvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
+      let dataUrl;
+      try {
+        dataUrl = out.toDataURL("image/png");
+      } catch (err) {
+        alert("Скріншот заблоковано CORS тайлів. Перезавантажте сторінку і спробуйте ще раз.");
+        return;
+      }
+      shotOpenPreview(dataUrl, out);
+    })
+    .catch((err) => {
+      endCrop();
+      console.error("Crop-скріншот не вдався:", err);
+    });
+}
+
+cropOverlay.addEventListener("mousedown", onCropStart);
+cropOverlay.addEventListener("mousemove", onCropMove);
+cropOverlay.addEventListener("mouseup", onCropEnd);
+cropOverlay.addEventListener("touchstart", onCropStart, { passive: false });
+cropOverlay.addEventListener("touchmove", onCropMove, { passive: false });
+cropOverlay.addEventListener("touchend", onCropEnd, { passive: false });
+
+document.getElementById("btnShot").addEventListener("click", shootFull);
+document.getElementById("btnCrop").addEventListener("click", startCrop);
+
+// Esc закриває превʼю / виділення — як в index2
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (shotPreviewEl.classList.contains("open")) { shotClosePreview(); return; }
+    if (cropActive) { endCrop(); return; }
+  }
+});
+["typePanel", "settingsPanel", "targetMenu", "shotPreview", "cropOverlay"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el && window.L && L.DomEvent) {
+    L.DomEvent.disableClickPropagation(el);
+    L.DomEvent.disableScrollPropagation(el);
+  }
+});
+
+setHint();
+</script>
+</body>
+</html>
